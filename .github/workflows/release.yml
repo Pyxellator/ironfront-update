@@ -28,9 +28,12 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
+          $asset = "Ironfront-Command-Setup-$version.exe"
+          Move-Item "release/Ironfront Command Setup $version.exe" "release/$asset"
+          Move-Item "release/Ironfront Command Setup $version.exe.blockmap" "release/$asset.blockmap"
           gh release create "${{ github.ref_name }}" `
-            "release/Ironfront Command Setup $version.exe" `
-            "release/Ironfront Command Setup $version.exe.blockmap" `
+            "release/$asset" `
+            "release/$asset.blockmap" `
             "release/latest.yml" `
             --title "Ironfront Command $version" --generate-notes
         env:
