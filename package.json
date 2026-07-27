@@ -1,6 +1,6 @@
 {
   "name": "ironfront-command",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Desktop multiplayer prototype with four factions",
   "main": "electron/main.cjs",
   "author": "Ironfront Studio",
@@ -18,7 +18,7 @@
     "directories": { "output": "release" },
     "files": ["dist/**/*", "electron/**/*", "package.json"],
     "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "build/icon.ico" },
-    "publish": [{ "provider": "github", "owner": "Pyxellator", "repo": "ironfront-update" }],
+    "publish": [{ "provider": "github", "owner": "Pyxellator", "repo": "ironfront-update", "releaseType": "release" }],
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "Ironfront Command" }
   },
   "devDependencies": {
