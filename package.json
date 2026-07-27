@@ -1,6 +1,6 @@
 {
   "name": "ironfront-command",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Desktop multiplayer prototype with four factions",
   "main": "electron/main.cjs",
   "author": "Ironfront Studio",
@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "build": "vite build",
-    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "release:win": "npm run build && electron-builder --win nsis --publish always",
     "start": "electron ."
   },

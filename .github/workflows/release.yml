@@ -22,7 +22,16 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Build and publish GitHub Release
-        run: npm run release:win
+      - name: Build Windows installer
+        run: npm run dist:win
+      - name: Publish GitHub Release
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          gh release create "${{ github.ref_name }}" `
+            "release/Ironfront Command Setup $version.exe" `
+            "release/Ironfront Command Setup $version.exe.blockmap" `
+            "release/latest.yml" `
+            --title "Ironfront Command $version" --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
