@@ -1,6 +1,6 @@
 {
   "name": "ironfront-command",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Desktop multiplayer prototype with four factions",
   "main": "electron/main.cjs",
   "author": "Ironfront Studio",

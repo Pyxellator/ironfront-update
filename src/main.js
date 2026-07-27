@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDoc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, getFirestore, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyBzo13TnpsZczAFspjdKG6dzGeRiiYxotA', authDomain: 'fake-war-thunder.firebaseapp.com', projectId: 'fake-war-thunder',
@@ -119,7 +119,10 @@ if (window.ironfrontUpdater) {
 }
 
 let scene, camera, renderer, tank, turret, clock, keys = {}, gameStarted = false;
-const remotePlayers = new Map();
+let flight = null, cameraMode = 'third', lastGunShot = 0, lastMissileShot = 0;
+const projectiles = [], remotePlayers = new Map();
+let localVoiceStream = null, unsubscribeVoiceSignals = null;
+const voicePeers = new Map();
 function makeBase(team) {
   const group = new THREE.Group(); group.position.set(team.position[0], 0, team.position[2]); const color = new THREE.Color(team.color);
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(26, 30, 1.6, 6), new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(.35), metalness: .25, roughness: .7 })); pad.position.y = .7; group.add(pad);
@@ -171,6 +174,56 @@ function syncRemotePlayers() {
   });
   remotePlayers.forEach((remote, id) => { if (!activeIds.has(id)) { scene.remove(remote.object); remotePlayers.delete(id); } });
 }
+function fireProjectile(kind) {
+  const now = performance.now(); const cooldown = kind === 'gun' ? 105 : 1250;
+  if (!tank || now - (kind === 'gun' ? lastGunShot : lastMissileShot) < cooldown) return;
+  if (kind === 'gun') lastGunShot = now; else lastMissileShot = now;
+  const color = kind === 'gun' ? '#ffe88b' : '#ff7a58';
+  const geometry = kind === 'gun' ? new THREE.SphereGeometry(.13, 8, 8) : new THREE.CylinderGeometry(.16, .26, 2.4, 10);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color }));
+  mesh.position.copy(tank.localToWorld(new THREE.Vector3(kind === 'gun' ? .45 : 1.7, kind === 'gun' ? 2.9 : 1.1, -5.8)));
+  mesh.quaternion.copy(tank.quaternion); if (kind === 'missile') mesh.rotateX(Math.PI / 2);
+  scene.add(mesh); const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(tank.quaternion).normalize();
+  projectiles.push({ mesh, direction, speed: kind === 'gun' ? 260 : 110, born: now, kind });
+  if (kind === 'missile') toast('RAKETE ABGEFEUERT');
+}
+function updateProjectiles(delta) {
+  const now = performance.now(); for (let i = projectiles.length - 1; i >= 0; i -= 1) { const shot = projectiles[i]; shot.mesh.position.addScaledVector(shot.direction, shot.speed * delta); if (shot.kind === 'missile') shot.mesh.rotateZ(delta * 8); if (now - shot.born > (shot.kind === 'gun' ? 1200 : 5000)) { scene.remove(shot.mesh); projectiles.splice(i, 1); } }
+}
+function signalRef(peerId) { const key = [state.userId, peerId].sort().join('__'); return doc(state.db, 'lobbies', state.room, 'voiceSignals', key); }
+function addLocalAudio(peer) { if (!localVoiceStream || peer.localTracksAdded) return; localVoiceStream.getTracks().forEach((track) => peer.connection.addTrack(track, localVoiceStream)); peer.localTracksAdded = true; }
+function ensureVoicePeer(peerId) {
+  let peer = voicePeers.get(peerId); if (peer) return peer;
+  const connection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] });
+  peer = { connection, offerCandidates: new Set(), answerCandidates: new Set(), remoteSet: false, localTracksAdded: false }; voicePeers.set(peerId, peer); addLocalAudio(peer);
+  connection.ontrack = (event) => { const audio = new Audio(); audio.autoplay = true; audio.srcObject = event.streams[0]; audio.play().catch(() => {}); };
+  connection.onicecandidate = (event) => { if (!event.candidate || !state.multiplayer) return; const offerer = state.userId < peerId; setDoc(signalRef(peerId), { offererId: offerer ? state.userId : peerId, answererId: offerer ? peerId : state.userId, [offerer ? 'offerCandidates' : 'answerCandidates']: arrayUnion(event.candidate.toJSON()), updatedAt: serverTimestamp() }, { merge: true }); };
+  return peer;
+}
+async function startVoiceTransmit() {
+  if (!gameStarted || !state.multiplayer || !state.team) return;
+  try {
+    if (!localVoiceStream) localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    localVoiceStream.getAudioTracks().forEach((track) => { track.enabled = true; }); updateLocalPlayer({ voiceEnabled: true });
+    state.players.forEach((player, id) => { if (id !== state.userId && player.status === 'active' && player.teamId === state.team.id && !voicePeers.has(id)) createVoiceOffer(id); });
+  } catch (error) { console.error('Voice unavailable', error); toast('Mikrofon nicht verfügbar. Prüfe die Windows-Berechtigung.'); }
+}
+function stopVoiceTransmit() { localVoiceStream?.getAudioTracks().forEach((track) => { track.enabled = false; }); updateLocalPlayer({ voiceEnabled: false }); }
+async function createVoiceOffer(peerId) {
+  const peer = ensureVoicePeer(peerId); const offer = await peer.connection.createOffer(); await peer.connection.setLocalDescription(offer);
+  await setDoc(signalRef(peerId), { offererId: state.userId, answererId: peerId, offer: { type: offer.type, sdp: offer.sdp }, offerCandidates: [], answerCandidates: [], createdAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+}
+async function processVoiceSignal(signal) {
+  const data = signal.data(); if (!data.offererId || !data.answererId || (data.offererId !== state.userId && data.answererId !== state.userId)) return;
+  const peerId = data.offererId === state.userId ? data.answererId : data.offererId; const peer = ensureVoicePeer(peerId);
+  try {
+    if (data.offer && data.answererId === state.userId && !peer.remoteSet) { await peer.connection.setRemoteDescription(new RTCSessionDescription(data.offer)); peer.remoteSet = true; const answer = await peer.connection.createAnswer(); await peer.connection.setLocalDescription(answer); await setDoc(signal.ref, { answer: { type: answer.type, sdp: answer.sdp }, updatedAt: serverTimestamp() }, { merge: true }); }
+    if (data.answer && data.offererId === state.userId && !peer.remoteSet) { await peer.connection.setRemoteDescription(new RTCSessionDescription(data.answer)); peer.remoteSet = true; }
+    const candidates = data.offererId === state.userId ? data.answerCandidates : data.offerCandidates; const seen = data.offererId === state.userId ? peer.answerCandidates : peer.offerCandidates;
+    for (const candidate of candidates || []) { const key = candidate.candidate; if (!seen.has(key)) { seen.add(key); await peer.connection.addIceCandidate(new RTCIceCandidate(candidate)); } }
+  } catch (error) { console.warn('Voice signalling failed', error); }
+}
+function startVoiceSignalling() { if (!state.multiplayer) return; unsubscribeVoiceSignals?.(); unsubscribeVoiceSignals = onSnapshot(collection(state.db, 'lobbies', state.room, 'voiceSignals'), (snapshot) => snapshot.docChanges().forEach((change) => { if (change.type !== 'removed') processVoiceSignal(change.doc); })); }
 function addTerrain() {
   scene.fog = new THREE.Fog('#9ebfc4', 160, 530); scene.background = new THREE.Color('#9ebfc4');
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(500, 500, 64, 64), new THREE.MeshStandardMaterial({ color: '#344f3b', roughness: 1 })); ground.rotation.x = -Math.PI / 2; scene.add(ground);
@@ -181,13 +234,14 @@ function addTerrain() {
 }
 function beginGame() {
   if (gameStarted) return; gameStarted = true; scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(61, innerWidth / innerHeight, .1, 1000);
-  renderer = new THREE.WebGLRenderer({ canvas: $('game-canvas'), antialias: true }); renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.outputColorSpace = THREE.SRGBColorSpace;
-  scene.add(new THREE.HemisphereLight('#d9f6ff', '#29402c', 2.1)); const sun = new THREE.DirectionalLight('#fff1d6', 2.8); sun.position.set(100, 170, 60); scene.add(sun); addTerrain(); teams.forEach(makeBase);
-  turret = null; tank = createVehicle(state.vehicle.id, state.team.id, true); tank.position.set(state.team.position[0], state.vehicle.id === 'jet' ? 11 : state.vehicle.id === 'boat' ? 1 : 0, state.team.position[2] + 32); scene.add(tank);
+  renderer = new THREE.WebGLRenderer({ canvas: $('game-canvas'), antialias: true, powerPreference: 'high-performance' }); renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.12;
+  scene.add(new THREE.HemisphereLight('#d9f6ff', '#17261d', 2.5)); const sun = new THREE.DirectionalLight('#fff1d6', 3.2); sun.position.set(100, 170, 60); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); scene.add(sun); addTerrain(); teams.forEach(makeBase);
+  turret = null; tank = createVehicle(state.vehicle.id, state.team.id, true); tank.rotation.order = 'YXZ'; tank.position.set(state.team.position[0], state.vehicle.id === 'jet' ? 1 : state.vehicle.id === 'boat' ? 1 : 0, state.team.position[2] + 32); scene.add(tank);
+  if (state.vehicle.id === 'jet') flight = { speed: 0, throttle: 0, pitch: 0, roll: 0, verticalSpeed: 0, airborne: false };
   $('hud-team').textContent = state.team.name; $('hud-team').style.color = state.team.color; $('match-room').textContent = `ONLINE · ${state.room}`; $('vehicle-name').textContent = state.vehicle.title;
-  clock = new THREE.Clock(); window.addEventListener('resize', resize); document.addEventListener('keydown', (event) => { keys[event.code] = true; }); document.addEventListener('keyup', (event) => { keys[event.code] = false; });
-  $('game-canvas').addEventListener('click', () => $('game-canvas').requestPointerLock()); document.addEventListener('mousemove', (event) => { if (turret && document.pointerLockElement === $('game-canvas')) turret.rotation.y -= event.movementX * .006; });
-  syncRemotePlayers(); syncLocalPlayer(true); animate(); toast('Online-Einsatz gestartet. Andere Spieler erscheinen automatisch auf der Karte.');
+  clock = new THREE.Clock(); window.addEventListener('resize', resize); document.addEventListener('keydown', (event) => { keys[event.code] = true; if (event.code === 'KeyC' && state.vehicle.id === 'jet') { cameraMode = cameraMode === 'third' ? 'cockpit' : 'third'; toast(cameraMode === 'cockpit' ? 'COCKPIT-ANSICHT' : 'AUSSENANSICHT'); } if (event.code === 'KeyV' && !event.repeat) startVoiceTransmit(); }); document.addEventListener('keyup', (event) => { keys[event.code] = false; if (event.code === 'KeyV') stopVoiceTransmit(); });
+  $('game-canvas').addEventListener('click', () => $('game-canvas').requestPointerLock()); $('game-canvas').addEventListener('contextmenu', (event) => event.preventDefault()); $('game-canvas').addEventListener('mousedown', (event) => { if (document.pointerLockElement !== $('game-canvas')) return; if (event.button === 0) fireProjectile('gun'); if (event.button === 2) fireProjectile('missile'); }); document.addEventListener('mousemove', (event) => { if (turret && document.pointerLockElement === $('game-canvas')) turret.rotation.y -= event.movementX * .006; });
+  syncRemotePlayers(); startVoiceSignalling(); syncLocalPlayer(true); animate(); toast(state.vehicle.id === 'jet' ? 'STARTFREIGABE: W gibt Schub, R zieht die Nase hoch.' : 'Online-Einsatz gestartet. Andere Spieler erscheinen automatisch auf der Karte.');
 }
 function syncLocalPlayer(force = false) {
   if (!state.multiplayer || !tank || (!force && performance.now() - state.lastSync < 100)) return; state.lastSync = performance.now();
@@ -195,13 +249,21 @@ function syncLocalPlayer(force = false) {
 }
 function resize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
 function animate() {
-  requestAnimationFrame(animate); const delta = Math.min(clock.getDelta(), .05); let input = 0; if (keys.KeyW || keys.ArrowUp) input += 1; if (keys.KeyS || keys.ArrowDown) input -= 1;
-  const steer = ((keys.KeyA || keys.ArrowLeft) ? 1 : 0) - ((keys.KeyD || keys.ArrowRight) ? 1 : 0); const topSpeed = keys.ShiftLeft ? 33 : 19; if (input) tank.rotation.y += steer * delta * 1.35 * input; else if (steer) tank.rotation.y += steer * delta * .65;
-  const speed = input * topSpeed; tank.translateZ(-speed * delta); tank.position.x = THREE.MathUtils.clamp(tank.position.x, -230, 230); tank.position.z = THREE.MathUtils.clamp(tank.position.z, -230, 230);
-  if (state.vehicle.id === 'jet') tank.rotation.z = THREE.MathUtils.lerp(tank.rotation.z, -steer * .22, delta * 4); if (state.vehicle.id === 'boat') tank.position.y = 1 + Math.sin(performance.now() * .003) * .12;
+  requestAnimationFrame(animate); const delta = Math.min(clock.getDelta(), .05); let speed = 0;
+  if (state.vehicle.id === 'jet') {
+    const pitchInput = (keys.KeyR || keys.ArrowUp ? 1 : 0) - (keys.KeyF || keys.ArrowDown ? 1 : 0); const rollInput = (keys.KeyA ? 1 : 0) - (keys.KeyD ? 1 : 0); const throttleInput = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+    flight.throttle = THREE.MathUtils.clamp(flight.throttle + throttleInput * delta * .48, 0, 1); flight.speed = Math.max(0, flight.speed + (flight.throttle * 30 - 3.5 - flight.speed * .012) * delta); flight.pitch = THREE.MathUtils.clamp(flight.pitch + pitchInput * delta * .55, -.32, .38); flight.roll = THREE.MathUtils.lerp(flight.roll, rollInput * .65, delta * 2.8);
+    tank.rotation.x = flight.airborne ? flight.pitch : 0; tank.rotation.z = flight.roll; tank.rotation.y += rollInput * delta * (.2 + flight.speed * .008); tank.translateZ(-flight.speed * delta);
+    if (flight.airborne) { const lift = Math.max(0, flight.speed - 32) * Math.max(0, flight.pitch + .08) * .72; flight.verticalSpeed += (lift - 9.81) * delta; tank.position.y += flight.verticalSpeed * delta; } else if (flight.speed > 42 && flight.pitch > .09) { flight.airborne = true; flight.verticalSpeed = 3.4; }
+    if (tank.position.y <= 1) { tank.position.y = 1; flight.verticalSpeed = 0; flight.airborne = false; }
+    speed = flight.speed; $('flight-status').textContent = flight.airborne ? `FLUG · ${Math.round(tank.position.y)} M` : `STARTLAUF · ${Math.round(flight.throttle * 100)}% SCHUB`;
+  } else {
+    let input = 0; if (keys.KeyW || keys.ArrowUp) input += 1; if (keys.KeyS || keys.ArrowDown) input -= 1; const steer = ((keys.KeyA || keys.ArrowLeft) ? 1 : 0) - ((keys.KeyD || keys.ArrowRight) ? 1 : 0); const topSpeed = keys.ShiftLeft ? 33 : 19; if (input) tank.rotation.y += steer * delta * 1.35 * input; else if (steer) tank.rotation.y += steer * delta * .65; speed = input * topSpeed; tank.translateZ(-speed * delta); if (state.vehicle.id === 'boat') tank.position.y = 1 + Math.sin(performance.now() * .003) * .12; $('flight-status').textContent = 'BODENBETRIEB';
+  }
+  tank.position.x = THREE.MathUtils.clamp(tank.position.x, -230, 230); tank.position.z = THREE.MathUtils.clamp(tank.position.z, -230, 230);
   remotePlayers.forEach((remote) => { remote.object.position.lerp(remote.targetPosition, 1 - Math.pow(.001, delta)); const angle = Math.atan2(Math.sin(remote.targetRotation - remote.object.rotation.y), Math.cos(remote.targetRotation - remote.object.rotation.y)); remote.object.rotation.y += angle * Math.min(1, delta * 10); });
-  const desired = new THREE.Vector3(0, state.vehicle.id === 'jet' ? 11 : 15, 25).applyAxisAngle(new THREE.Vector3(0, 1, 0), tank.rotation.y).add(tank.position); camera.position.lerp(desired, 1 - Math.pow(.001, delta)); camera.lookAt(tank.position.x, tank.position.y + 2, tank.position.z);
-  $('speed').textContent = `${Math.round(Math.abs(speed) * 3.6)} KM/H`; $('player-dot').style.left = `${50 + tank.position.x / 5}%`; $('player-dot').style.top = `${50 + tank.position.z / 5}%`; syncLocalPlayer(); renderer.render(scene, camera);
+  if (state.vehicle.id === 'jet' && cameraMode === 'cockpit') { const cockpit = tank.localToWorld(new THREE.Vector3(0, 2.15, -1.5)); const look = tank.localToWorld(new THREE.Vector3(0, 2.05, -40)); camera.position.lerp(cockpit, 1 - Math.pow(.0001, delta)); camera.lookAt(look); } else { const desired = new THREE.Vector3(0, state.vehicle.id === 'jet' ? 10 : 15, state.vehicle.id === 'jet' ? 31 : 25).applyAxisAngle(new THREE.Vector3(0, 1, 0), tank.rotation.y).add(tank.position); camera.position.lerp(desired, 1 - Math.pow(.001, delta)); camera.lookAt(tank.position.x, tank.position.y + 2, tank.position.z); }
+  updateProjectiles(delta); $('speed').textContent = `${Math.round(Math.abs(speed) * 3.6)} KM/H`; $('player-dot').style.left = `${50 + tank.position.x / 5}%`; $('player-dot').style.top = `${50 + tank.position.z / 5}%`; syncLocalPlayer(); renderer.render(scene, camera);
 }
 
 startFirebase();

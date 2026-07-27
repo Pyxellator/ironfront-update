@@ -35,9 +35,14 @@ service cloud.firestore {
           && validPlayer(request.resource.data)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'name', 'teamId', 'vehicleId', 'status', 'updatedAt',
-            'position', 'rotationY', 'clientUpdatedAt'
+            'position', 'rotationY', 'clientUpdatedAt', 'voiceEnabled'
           ]);
         allow delete: if signedIn() && request.auth.uid == playerId;
+      }
+
+      // Kurzlebige WebRTC-Angebote, Antworten und ICE-Kandidaten für Team-Voice.
+      match /voiceSignals/{signalId} {
+        allow read, create, update, delete: if signedIn();
       }
     }
   }

@@ -41,6 +41,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  require('electron').session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => callback(permission === 'media'));
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
