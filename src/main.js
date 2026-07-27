@@ -113,13 +113,19 @@ $('start-game').addEventListener('click', () => { showScreen('none'); $('hud').c
 $('leave-match').addEventListener('click', async () => { try { if (state.multiplayer) await deleteDoc(playerRef()); } catch (error) { console.warn('Could not remove lobby player', error); } state.unsubscribePlayers?.(); location.reload(); });
 
 if (window.ironfrontUpdater) {
-  window.ironfrontUpdater.onStatus((status) => {
+  let updateAnswered = false;
+  const applyUpdateStatus = (status) => {
     const screen = $('update-screen');
     if (status.type === 'checking') { $('update-title').textContent = 'SUCHE NACH UPDATES'; $('update-message').textContent = 'GitHub Releases werden geprüft …'; }
-    if (status.type === 'available') { $('update-title').textContent = 'UPDATE WIRD GELADEN'; $('update-message').textContent = status.message; }
-    if (status.type === 'downloaded') { $('update-title').textContent = 'UPDATE BEREIT'; $('update-message').textContent = status.message; }
-    if (status.type === 'current' || status.type === 'error') { $('update-title').textContent = status.type === 'current' ? 'SYSTEM AKTUELL' : 'OFFLINE-MODUS'; $('update-message').textContent = status.type === 'current' ? 'Die neueste Version ist installiert.' : status.message; setTimeout(() => screen.classList.add('hidden'), 900); }
-  });
+    if (status.type === 'available') { updateAnswered = true; $('update-title').textContent = 'UPDATE WIRD GELADEN'; $('update-message').textContent = status.message; }
+    if (status.type === 'downloaded') { updateAnswered = true; $('update-title').textContent = 'UPDATE BEREIT'; $('update-message').textContent = status.message; }
+    if (status.type === 'current' || status.type === 'error') { updateAnswered = true; $('update-title').textContent = status.type === 'current' ? 'SYSTEM AKTUELL' : 'OFFLINE-MODUS'; $('update-message').textContent = status.type === 'current' ? 'Die neueste Version ist installiert.' : status.message; setTimeout(() => screen.classList.add('hidden'), 900); }
+  };
+  window.ironfrontUpdater.onStatus(applyUpdateStatus);
+  window.ironfrontUpdater.getStatus().then(applyUpdateStatus).catch(() => {});
+  setTimeout(() => { if (!updateAnswered) { $('update-message').textContent = 'Updateprüfung übersprungen. Spiel wird gestartet.'; setTimeout(() => $('update-screen').classList.add('hidden'), 500); } }, 12000);
+} else {
+  $('update-screen').classList.add('hidden');
 }
 
 let scene, camera, renderer, tank, turret, clock, keys = {}, gameStarted = false;

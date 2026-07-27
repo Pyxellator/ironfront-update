@@ -8,5 +8,8 @@ contextBridge.exposeInMainWorld('ironfrontUpdater', {
   },
   install() {
     return ipcRenderer.invoke('update:install');
+  },
+  getStatus() {
+    return ipcRenderer.invoke('update:get-status');
   }
 });

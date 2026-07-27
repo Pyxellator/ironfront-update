@@ -4,13 +4,16 @@ const path = require('path');
 
 const isDev = !app.isPackaged;
 let mainWindow;
+let updateStatus = { type: 'checking', message: 'Suche nach Updates …' };
 
 function sendUpdateStatus(type, message = '') {
-  mainWindow?.webContents.send('update:status', { type, message });
+  updateStatus = { type, message };
+  mainWindow?.webContents.send('update:status', updateStatus);
 }
 
 function configureAutoUpdater() {
   if (isDev) return;
+  sendUpdateStatus('checking', 'GitHub Releases werden geprüft …');
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
@@ -18,10 +21,11 @@ function configureAutoUpdater() {
   autoUpdater.on('update-not-available', () => sendUpdateStatus('current'));
   autoUpdater.on('update-downloaded', (info) => { sendUpdateStatus('downloaded', `Version ${info.version} wird jetzt installiert.`); setTimeout(() => autoUpdater.quitAndInstall(), 1800); });
   autoUpdater.on('error', (error) => { console.warn('Update check failed:', error.message); sendUpdateStatus('error', 'Updateprüfung fehlgeschlagen.'); });
-  setTimeout(() => autoUpdater.checkForUpdates().catch((error) => console.warn('Update check failed:', error.message)), 3500);
+  setTimeout(() => autoUpdater.checkForUpdates().catch((error) => { console.warn('Update check failed:', error.message); sendUpdateStatus('error', 'Updateprüfung nicht erreichbar. Spiel wird gestartet.'); }), 1200);
 }
 
 ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
+ipcMain.handle('update:get-status', () => updateStatus);
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -30,6 +34,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     title: 'Ironfront Command',
+    icon: path.join(__dirname, '..', 'build', 'icon.ico'),
     backgroundColor: '#08110f',
     autoHideMenuBar: true,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.cjs') }
