@@ -1,6 +1,6 @@
 {
   "name": "ironfront-command",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Desktop multiplayer prototype with four factions",
   "main": "electron/main.cjs",
   "author": "Ironfront Studio",
@@ -22,6 +22,8 @@
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "Ironfront Command" }
   },
   "devDependencies": {
+    "@emnapi/core": "1.11.3",
+    "@emnapi/runtime": "1.11.3",
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
     "electron": "latest",
