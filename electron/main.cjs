@@ -16,7 +16,7 @@ function configureAutoUpdater() {
   autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
   autoUpdater.on('update-available', (info) => sendUpdateStatus('available', `Version ${info.version} wird heruntergeladen …`));
   autoUpdater.on('update-not-available', () => sendUpdateStatus('current'));
-  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', `Version ${info.version} ist bereit.`));
+  autoUpdater.on('update-downloaded', (info) => { sendUpdateStatus('downloaded', `Version ${info.version} wird jetzt installiert.`); setTimeout(() => autoUpdater.quitAndInstall(), 1800); });
   autoUpdater.on('error', (error) => { console.warn('Update check failed:', error.message); sendUpdateStatus('error', 'Updateprüfung fehlgeschlagen.'); });
   setTimeout(() => autoUpdater.checkForUpdates().catch((error) => console.warn('Update check failed:', error.message)), 3500);
 }
@@ -37,7 +37,7 @@ function createWindow() {
   if (isDev) mainWindow.loadURL('http://127.0.0.1:5173');
   else mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
-  mainWindow.once('ready-to-show', configureAutoUpdater);
+  mainWindow.once('ready-to-show', () => { if (isDev) sendUpdateStatus('current', 'Entwicklungsmodus'); else configureAutoUpdater(); });
 }
 
 app.whenReady().then(() => {

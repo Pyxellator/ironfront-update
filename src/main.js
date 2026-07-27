@@ -8,11 +8,13 @@ const firebaseConfig = {
   storageBucket: 'fake-war-thunder.firebasestorage.app', messagingSenderId: '7982655959', appId: '1:7982655959:web:e3a4e22a8a2c5f74e38392', measurementId: 'G-TKLW6RTTH0'
 };
 
+const MAP_SIZE = 3550;
+
 const teams = [
-  { id: 'scarlet', name: 'SCARLET LEGION', short: 'SCARLET', color: '#ec4f4f', position: [-150, 0, -150], role: 'SCHNELLE PANZERDIVISION' },
-  { id: 'cobalt', name: 'COBALT FLEET', short: 'COBALT', color: '#5191ef', position: [150, 0, -150], role: 'MARITIME EINSATZGRUPPE' },
-  { id: 'gold', name: 'GOLDEN SQUADRON', short: 'GOLD', color: '#e0ae48', position: [-150, 0, 150], role: 'LUFTUNTERSTÜTZUNG' },
-  { id: 'verdant', name: 'VERDANT GUARD', short: 'VERDANT', color: '#5dbb71', position: [150, 0, 150], role: 'SCHWERE ABWEHR' }
+  { id: 'scarlet', name: 'SCARLET LEGION', short: 'SCARLET', color: '#ec4f4f', position: [-1120, 0, -1120], role: 'SCHNELLE PANZERDIVISION' },
+  { id: 'cobalt', name: 'COBALT FLEET', short: 'COBALT', color: '#5191ef', position: [1120, 0, -1120], role: 'MARITIME EINSATZGRUPPE' },
+  { id: 'gold', name: 'GOLDEN SQUADRON', short: 'GOLD', color: '#e0ae48', position: [-1120, 0, 1120], role: 'LUFTUNTERSTÜTZUNG' },
+  { id: 'verdant', name: 'VERDANT GUARD', short: 'VERDANT', color: '#5dbb71', position: [1120, 0, 1120], role: 'SCHWERE ABWEHR' }
 ];
 const vehicles = [
   { id: 'tank', title: 'M1A1 MAIN BATTLE TANK', type: 'PANZER', info: 'Hohe Panzerung · 120 mm Kanone', icon: '▰' },
@@ -112,25 +114,33 @@ $('leave-match').addEventListener('click', async () => { try { if (state.multipl
 
 if (window.ironfrontUpdater) {
   window.ironfrontUpdater.onStatus((status) => {
-    if (status.type === 'available') toast(status.message);
-    if (status.type === 'downloaded') { $('update-message').textContent = status.message; $('update-banner').classList.remove('hidden'); }
+    const screen = $('update-screen');
+    if (status.type === 'checking') { $('update-title').textContent = 'SUCHE NACH UPDATES'; $('update-message').textContent = 'GitHub Releases werden geprüft …'; }
+    if (status.type === 'available') { $('update-title').textContent = 'UPDATE WIRD GELADEN'; $('update-message').textContent = status.message; }
+    if (status.type === 'downloaded') { $('update-title').textContent = 'UPDATE BEREIT'; $('update-message').textContent = status.message; }
+    if (status.type === 'current' || status.type === 'error') { $('update-title').textContent = status.type === 'current' ? 'SYSTEM AKTUELL' : 'OFFLINE-MODUS'; $('update-message').textContent = status.type === 'current' ? 'Die neueste Version ist installiert.' : status.message; setTimeout(() => screen.classList.add('hidden'), 900); }
   });
-  $('install-update').addEventListener('click', () => window.ironfrontUpdater.install());
 }
 
 let scene, camera, renderer, tank, turret, clock, keys = {}, gameStarted = false;
-let flight = null, cameraMode = 'third', lastGunShot = 0, lastMissileShot = 0;
+let flight = null, cameraMode = 'third', cockpitInterior = null, lastGunShot = 0, lastMissileShot = 0;
 const projectiles = [], remotePlayers = new Map();
 let localVoiceStream = null, unsubscribeVoiceSignals = null;
 const voicePeers = new Map();
 function makeBase(team) {
-  const group = new THREE.Group(); group.position.set(team.position[0], 0, team.position[2]); const color = new THREE.Color(team.color);
+  const heading = Math.atan2(team.position[0], team.position[2]); const group = new THREE.Group(); group.position.set(team.position[0] + Math.cos(heading) * 55, 0, team.position[2] - Math.sin(heading) * 55); const color = new THREE.Color(team.color);
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(26, 30, 1.6, 6), new THREE.MeshStandardMaterial({ color: color.clone().multiplyScalar(.35), metalness: .25, roughness: .7 })); pad.position.y = .7; group.add(pad);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(17, .45, 8, 48), new THREE.MeshBasicMaterial({ color })); ring.rotation.x = Math.PI / 2; ring.position.y = 1.6; group.add(ring);
   const tower = new THREE.Mesh(new THREE.BoxGeometry(7, 18, 7), new THREE.MeshStandardMaterial({ color: '#263632', metalness: .55, roughness: .45 })); tower.position.y = 10; group.add(tower);
   const beacon = new THREE.Mesh(new THREE.SphereGeometry(1.1, 16, 12), new THREE.MeshBasicMaterial({ color })); beacon.position.y = 20; group.add(beacon);
   const light = new THREE.PointLight(color, 2.1, 40); light.position.y = 17; group.add(light);
   const flag = new THREE.Mesh(new THREE.PlaneGeometry(7, 4), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })); flag.position.set(5, 16, 0); group.add(flag); scene.add(group);
+  const runway = new THREE.Group(); runway.position.set(team.position[0], .12, team.position[2]); runway.rotation.y = heading;
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(34, .2, 540), new THREE.MeshStandardMaterial({ color: '#202724', roughness: .92, metalness: .08 })); strip.receiveShadow = true; runway.add(strip);
+  const edge = new THREE.MeshStandardMaterial({ color: '#c6d0c3', roughness: .7 }); for (const x of [-15.5, 15.5]) { const line = new THREE.Mesh(new THREE.BoxGeometry(.7, .08, 520), edge); line.position.set(x, .15, 0); runway.add(line); }
+  for (let z = -240; z <= 240; z += 36) { const dash = new THREE.Mesh(new THREE.BoxGeometry(.7, .08, 16), edge); dash.position.set(0, .16, z); runway.add(dash); for (const x of [-18, 18]) { const lamp = new THREE.Mesh(new THREE.SphereGeometry(.28, 8, 6), new THREE.MeshBasicMaterial({ color: team.color })); lamp.position.set(x, .4, z); runway.add(lamp); } }
+  const thresholdMaterial = new THREE.MeshBasicMaterial({ color: '#f1f3df' }); for (const x of [-10, -6, -2, 2, 6, 10]) { const threshold = new THREE.Mesh(new THREE.BoxGeometry(2.2, .09, 24), thresholdMaterial); threshold.position.set(x, .17, -247); runway.add(threshold); }
+  scene.add(runway);
 }
 function createTank(color, isLocal = false) {
   const group = new THREE.Group(); const material = new THREE.MeshStandardMaterial({ color, metalness: .55, roughness: .4 }); const dark = new THREE.MeshStandardMaterial({ color: '#19221e', metalness: .7, roughness: .35 });
@@ -142,11 +152,27 @@ function createTank(color, isLocal = false) {
   const glow = new THREE.PointLight(color, 1.3, 8); glow.position.set(0, 2, -5); group.add(glow); return group;
 }
 function createJet(color) {
-  const group = new THREE.Group(); const material = new THREE.MeshStandardMaterial({ color, metalness: .65, roughness: .28 });
-  const fuselage = new THREE.Mesh(new THREE.ConeGeometry(1.25, 10, 16), material); fuselage.rotation.x = Math.PI / 2; group.add(fuselage);
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(1.05, 16, 12), new THREE.MeshStandardMaterial({ color: '#294751', metalness: .8, roughness: .12 })); cockpit.scale.set(.75, .55, 1.35); cockpit.position.set(0, .55, -1); group.add(cockpit);
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(10, .22, 2.1), material); wing.position.z = 1.1; group.add(wing); const tailWing = new THREE.Mesh(new THREE.BoxGeometry(4, .16, 1), material); tailWing.position.z = 4; group.add(tailWing);
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(.15, 2.2, 1.9), material); tail.position.set(0, 1, 3.8); group.add(tail); const exhaust = new THREE.PointLight('#79b8ff', 2, 16); exhaust.position.z = 5.2; group.add(exhaust); return group;
+  const group = new THREE.Group(); const material = new THREE.MeshStandardMaterial({ color, metalness: .72, roughness: .32 }); const dark = new THREE.MeshStandardMaterial({ color: '#17201e', metalness: .85, roughness: .2 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(.82, 1.08, 9.5, 20), material); body.rotation.x = Math.PI / 2; body.position.z = -.2; body.castShadow = true; group.add(body);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(.84, 4.2, 20), material); nose.rotation.x = -Math.PI / 2; nose.position.z = -7; group.add(nose);
+  const intake = new THREE.Mesh(new THREE.CylinderGeometry(.63, .7, 1.4, 18, 1, true), dark); intake.rotation.x = Math.PI / 2; intake.position.set(0, -.65, -2); group.add(intake);
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 14), new THREE.MeshPhysicalMaterial({ color: '#7fb3bd', metalness: .35, roughness: .05, transmission: .25, transparent: true, opacity: .78 })); canopy.scale.set(.68, .52, 1.65); canopy.position.set(0, .82, -2.1); group.add(canopy);
+  const wingGeometry = new THREE.BufferGeometry(); wingGeometry.setAttribute('position', new THREE.Float32BufferAttribute([-.35,0,-1.5,-7,0,2.2,-.65,0,3.1,.35,0,-1.5,.65,0,3.1,7,0,2.2],3)); wingGeometry.setIndex([0,1,2,3,4,5]); wingGeometry.computeVertexNormals(); const wings = new THREE.Mesh(wingGeometry, material); wings.position.y = .05; wings.castShadow = true; group.add(wings);
+  const stabilizer = new THREE.Mesh(new THREE.BoxGeometry(5.2, .14, 1.25), material); stabilizer.position.z = 4.1; group.add(stabilizer);
+  const finGeometry = new THREE.BufferGeometry(); finGeometry.setAttribute('position', new THREE.Float32BufferAttribute([0,0,2.7,0,3.5,4.1,0,0,4.8],3)); finGeometry.setIndex([0,1,2]); finGeometry.computeVertexNormals(); const fin = new THREE.Mesh(finGeometry, material); fin.material.side = THREE.DoubleSide; group.add(fin);
+  for (const x of [-3.7, 3.7]) { const missile = new THREE.Mesh(new THREE.CylinderGeometry(.14,.2,3.2,10), new THREE.MeshStandardMaterial({ color:'#d9ded8',metalness:.6,roughness:.3 })); missile.rotation.x = Math.PI/2; missile.position.set(x,-.45,.8); group.add(missile); }
+  for (const x of [-1.65,1.65]) { const gear = new THREE.Mesh(new THREE.TorusGeometry(.26,.12,8,14), dark); gear.rotation.y = Math.PI/2; gear.position.set(x,-1,1.2); group.add(gear); }
+  const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(.66,.82,1.3,20,1,true), dark); nozzle.rotation.x=Math.PI/2; nozzle.position.z=5; group.add(nozzle); const exhaust = new THREE.PointLight('#67aaff', 3.2, 22); exhaust.position.z = 5.7; group.add(exhaust); group.scale.setScalar(1.35); return group;
+}
+
+function createCockpitInterior() {
+  const cockpit = new THREE.Group(); const dark = new THREE.MeshStandardMaterial({ color:'#111715',metalness:.55,roughness:.5 }); const glow = new THREE.MeshBasicMaterial({ color:'#9fec85' });
+  const dashboard = new THREE.Mesh(new THREE.BoxGeometry(2.45,.65,1.1),dark); dashboard.position.set(0,-.72,-1.45); dashboard.rotation.x=-.16; cockpit.add(dashboard);
+  for (let i=0;i<8;i+=1){ const display=new THREE.Mesh(new THREE.PlaneGeometry(.28,.18),i%3===0?glow:new THREE.MeshBasicMaterial({color:'#365f49'})); display.position.set(-.93+(i%4)*.62,-.55-Math.floor(i/4)*.25,-2.02); cockpit.add(display); }
+  const hudGlass=new THREE.Mesh(new THREE.PlaneGeometry(1.1,.7),new THREE.MeshBasicMaterial({color:'#78ff9b',transparent:true,opacity:.16,side:THREE.DoubleSide})); hudGlass.position.set(0,-.12,-2.15); cockpit.add(hudGlass);
+  const reticle=new THREE.Mesh(new THREE.RingGeometry(.11,.13,24),new THREE.MeshBasicMaterial({color:'#8cff9b',transparent:true,opacity:.85})); reticle.position.set(0,-.05,-2.17); cockpit.add(reticle);
+  for(const x of [-1.28,1.28]){const strut=new THREE.Mesh(new THREE.BoxGeometry(.09,2.5,.09),dark);strut.position.set(x,.15,-1.4);strut.rotation.z=x>0?.42:-.42;cockpit.add(strut);} const top=new THREE.Mesh(new THREE.BoxGeometry(2.1,.1,.1),dark);top.position.set(0,1,-1.7);cockpit.add(top);
+  return cockpit;
 }
 function createBoat(color) {
   const group = new THREE.Group(); const material = new THREE.MeshStandardMaterial({ color, metalness: .45, roughness: .4 });
@@ -225,18 +251,20 @@ async function processVoiceSignal(signal) {
 }
 function startVoiceSignalling() { if (!state.multiplayer) return; unsubscribeVoiceSignals?.(); unsubscribeVoiceSignals = onSnapshot(collection(state.db, 'lobbies', state.room, 'voiceSignals'), (snapshot) => snapshot.docChanges().forEach((change) => { if (change.type !== 'removed') processVoiceSignal(change.doc); })); }
 function addTerrain() {
-  scene.fog = new THREE.Fog('#9ebfc4', 160, 530); scene.background = new THREE.Color('#9ebfc4');
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(500, 500, 64, 64), new THREE.MeshStandardMaterial({ color: '#344f3b', roughness: 1 })); ground.rotation.x = -Math.PI / 2; scene.add(ground);
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(500, 46), new THREE.MeshStandardMaterial({ color: '#1d6674', metalness: .5, roughness: .15, transparent: true, opacity: .88 })); water.rotation.x = -Math.PI / 2; water.position.set(0, .08, 0); scene.add(water);
-  const roadMat = new THREE.MeshStandardMaterial({ color: '#28332d', roughness: .95 }); for (const roadInfo of [[0, -105, 18, 290], [-105, 0, 290, 18], [105, 0, 290, 18]]) { const road = new THREE.Mesh(new THREE.BoxGeometry(roadInfo[2], .06, roadInfo[3]), roadMat); road.position.set(roadInfo[0], .13, roadInfo[1]); scene.add(road); }
-  const mountainMat = new THREE.MeshStandardMaterial({ color: '#466252', roughness: .95 }); for (let i = 0; i < 70; i += 1) { const angle = (i / 70) * Math.PI * 2; const radius = 215 + (i % 4) * 14; const height = 15 + (i % 7) * 9; const mountain = new THREE.Mesh(new THREE.ConeGeometry(12 + (i % 5) * 5, height, 6), mountainMat); mountain.position.set(Math.cos(angle) * radius, height / 2 - 1, Math.sin(angle) * radius); mountain.rotation.y = i; scene.add(mountain); }
-  const treeMat = new THREE.MeshStandardMaterial({ color: '#193e29', roughness: .85 }); for (let i = 0; i < 105; i += 1) { const x = -210 + ((i * 37) % 420); const z = -210 + ((i * 83) % 420); if (Math.abs(z) < 30 || (Math.abs(x) < 24 && z < -85)) continue; const height = 6 + (i % 5) * 2; const tree = new THREE.Mesh(new THREE.ConeGeometry(2.6 + (i % 3), height, 7), treeMat); tree.position.set(x, height / 2, z); scene.add(tree); }
+  scene.fog = new THREE.Fog('#8fb2bd', 900, 4200); scene.background = new THREE.Color('#8fb2bd');
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 96, 96), new THREE.MeshStandardMaterial({ color: '#344f3b', roughness: 1 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow=true; scene.add(ground);
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP_SIZE, 260), new THREE.MeshPhysicalMaterial({ color: '#176270', metalness: .25, roughness: .12, transparent: true, opacity: .9 })); water.rotation.x = -Math.PI / 2; water.position.set(0, .08, 0); scene.add(water);
+  const roadMat = new THREE.MeshStandardMaterial({ color: '#28332d', roughness: .95 }); for (const roadInfo of [[0, -640, 26, 1500], [-640, 0, 1500, 26], [640, 0, 1500, 26]]) { const road = new THREE.Mesh(new THREE.BoxGeometry(roadInfo[2], .06, roadInfo[3]), roadMat); road.position.set(roadInfo[0], .13, roadInfo[1]); scene.add(road); }
+  const mountainMat = new THREE.MeshStandardMaterial({ color: '#425e50', roughness: .98 }); for (let i = 0; i < 160; i += 1) { const angle = (i / 160) * Math.PI * 2; const radius = MAP_SIZE * .44 + (i % 5) * 32; const height = 45 + (i % 9) * 19; const mountain = new THREE.Mesh(new THREE.ConeGeometry(32 + (i % 6) * 18, height, 7), mountainMat); mountain.position.set(Math.cos(angle) * radius, height / 2 - 1, Math.sin(angle) * radius); mountain.rotation.y = i; mountain.castShadow=true; scene.add(mountain); }
+  const treeMat = new THREE.MeshStandardMaterial({ color: '#183d28', roughness: .9 }); for (let i = 0; i < 520; i += 1) { const x = -1650 + ((i * 197) % 3300); const z = -1650 + ((i * 353) % 3300); if (Math.abs(z) < 145 || Math.abs(x-Math.sign(x)*1120)<45 && Math.abs(z-Math.sign(z)*1120)<300) continue; const height = 8 + (i % 6) * 3; const tree = new THREE.Mesh(new THREE.ConeGeometry(3 + (i % 4), height, 7), treeMat); tree.position.set(x, height / 2, z); tree.castShadow=true; scene.add(tree); }
+  const cloudMat = new THREE.MeshBasicMaterial({color:'#f3f6ef',transparent:true,opacity:.42,depthWrite:false}); for(let i=0;i<24;i+=1){const cloud=new THREE.Group();for(let j=0;j<5;j+=1){const puff=new THREE.Mesh(new THREE.SphereGeometry(18+(j%3)*8,12,8),cloudMat);puff.position.set(j*22,Math.sin(j)*7,0);puff.scale.z=.55;cloud.add(puff);}cloud.position.set(-1500+(i*487)%3000,220+(i%5)*55,-1500+(i*733)%3000);scene.add(cloud);}
 }
 function beginGame() {
-  if (gameStarted) return; gameStarted = true; scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(61, innerWidth / innerHeight, .1, 1000);
+  if (gameStarted) return; gameStarted = true; scene = new THREE.Scene(); camera = new THREE.PerspectiveCamera(61, innerWidth / innerHeight, .08, 6000); scene.add(camera);
   renderer = new THREE.WebGLRenderer({ canvas: $('game-canvas'), antialias: true, powerPreference: 'high-performance' }); renderer.setSize(innerWidth, innerHeight); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.12;
   scene.add(new THREE.HemisphereLight('#d9f6ff', '#17261d', 2.5)); const sun = new THREE.DirectionalLight('#fff1d6', 3.2); sun.position.set(100, 170, 60); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); scene.add(sun); addTerrain(); teams.forEach(makeBase);
-  turret = null; tank = createVehicle(state.vehicle.id, state.team.id, true); tank.rotation.order = 'YXZ'; tank.position.set(state.team.position[0], state.vehicle.id === 'jet' ? 1 : state.vehicle.id === 'boat' ? 1 : 0, state.team.position[2] + 32); scene.add(tank);
+  turret = null; tank = createVehicle(state.vehicle.id, state.team.id, true); tank.rotation.order = 'YXZ'; const runwayHeading = Math.atan2(state.team.position[0], state.team.position[2]); tank.rotation.y = runwayHeading; tank.position.set(state.team.position[0] + Math.sin(runwayHeading) * 205, state.vehicle.id === 'jet' ? 1.35 : state.vehicle.id === 'boat' ? 1 : 0, state.team.position[2] + Math.cos(runwayHeading) * 205); scene.add(tank);
+  cockpitInterior = createCockpitInterior(); cockpitInterior.visible = false; camera.add(cockpitInterior);
   if (state.vehicle.id === 'jet') flight = { speed: 0, throttle: 0, pitch: 0, roll: 0, verticalSpeed: 0, airborne: false };
   $('hud-team').textContent = state.team.name; $('hud-team').style.color = state.team.color; $('match-room').textContent = `ONLINE · ${state.room}`; $('vehicle-name').textContent = state.vehicle.title;
   clock = new THREE.Clock(); window.addEventListener('resize', resize); document.addEventListener('keydown', (event) => { keys[event.code] = true; if (event.code === 'KeyC' && state.vehicle.id === 'jet') { cameraMode = cameraMode === 'third' ? 'cockpit' : 'third'; toast(cameraMode === 'cockpit' ? 'COCKPIT-ANSICHT' : 'AUSSENANSICHT'); } if (event.code === 'KeyV' && !event.repeat) startVoiceTransmit(); }); document.addEventListener('keyup', (event) => { keys[event.code] = false; if (event.code === 'KeyV') stopVoiceTransmit(); });
@@ -252,7 +280,7 @@ function animate() {
   requestAnimationFrame(animate); const delta = Math.min(clock.getDelta(), .05); let speed = 0;
   if (state.vehicle.id === 'jet') {
     const pitchInput = (keys.KeyR || keys.ArrowUp ? 1 : 0) - (keys.KeyF || keys.ArrowDown ? 1 : 0); const rollInput = (keys.KeyA ? 1 : 0) - (keys.KeyD ? 1 : 0); const throttleInput = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
-    flight.throttle = THREE.MathUtils.clamp(flight.throttle + throttleInput * delta * .48, 0, 1); flight.speed = Math.max(0, flight.speed + (flight.throttle * 30 - 3.5 - flight.speed * .012) * delta); flight.pitch = THREE.MathUtils.clamp(flight.pitch + pitchInput * delta * .55, -.32, .38); flight.roll = THREE.MathUtils.lerp(flight.roll, rollInput * .65, delta * 2.8);
+    flight.throttle = THREE.MathUtils.clamp(flight.throttle + throttleInput * delta * .38, 0, 1); flight.speed = THREE.MathUtils.clamp(flight.speed + (flight.throttle * 12 - 1.8 - flight.speed * .08) * delta, 0, 120); flight.pitch = THREE.MathUtils.clamp(flight.pitch + pitchInput * delta * .34, -.28, .34); flight.roll = THREE.MathUtils.lerp(flight.roll, rollInput * .55, delta * 2.4);
     tank.rotation.x = flight.airborne ? flight.pitch : 0; tank.rotation.z = flight.roll; tank.rotation.y += rollInput * delta * (.2 + flight.speed * .008); tank.translateZ(-flight.speed * delta);
     if (flight.airborne) { const lift = Math.max(0, flight.speed - 32) * Math.max(0, flight.pitch + .08) * .72; flight.verticalSpeed += (lift - 9.81) * delta; tank.position.y += flight.verticalSpeed * delta; } else if (flight.speed > 42 && flight.pitch > .09) { flight.airborne = true; flight.verticalSpeed = 3.4; }
     if (tank.position.y <= 1) { tank.position.y = 1; flight.verticalSpeed = 0; flight.airborne = false; }
@@ -260,10 +288,10 @@ function animate() {
   } else {
     let input = 0; if (keys.KeyW || keys.ArrowUp) input += 1; if (keys.KeyS || keys.ArrowDown) input -= 1; const steer = ((keys.KeyA || keys.ArrowLeft) ? 1 : 0) - ((keys.KeyD || keys.ArrowRight) ? 1 : 0); const topSpeed = keys.ShiftLeft ? 33 : 19; if (input) tank.rotation.y += steer * delta * 1.35 * input; else if (steer) tank.rotation.y += steer * delta * .65; speed = input * topSpeed; tank.translateZ(-speed * delta); if (state.vehicle.id === 'boat') tank.position.y = 1 + Math.sin(performance.now() * .003) * .12; $('flight-status').textContent = 'BODENBETRIEB';
   }
-  tank.position.x = THREE.MathUtils.clamp(tank.position.x, -230, 230); tank.position.z = THREE.MathUtils.clamp(tank.position.z, -230, 230);
+  tank.position.x = THREE.MathUtils.clamp(tank.position.x, -MAP_SIZE / 2 + 40, MAP_SIZE / 2 - 40); tank.position.z = THREE.MathUtils.clamp(tank.position.z, -MAP_SIZE / 2 + 40, MAP_SIZE / 2 - 40);
   remotePlayers.forEach((remote) => { remote.object.position.lerp(remote.targetPosition, 1 - Math.pow(.001, delta)); const angle = Math.atan2(Math.sin(remote.targetRotation - remote.object.rotation.y), Math.cos(remote.targetRotation - remote.object.rotation.y)); remote.object.rotation.y += angle * Math.min(1, delta * 10); });
-  if (state.vehicle.id === 'jet' && cameraMode === 'cockpit') { const cockpit = tank.localToWorld(new THREE.Vector3(0, 2.15, -1.5)); const look = tank.localToWorld(new THREE.Vector3(0, 2.05, -40)); camera.position.lerp(cockpit, 1 - Math.pow(.0001, delta)); camera.lookAt(look); } else { const desired = new THREE.Vector3(0, state.vehicle.id === 'jet' ? 10 : 15, state.vehicle.id === 'jet' ? 31 : 25).applyAxisAngle(new THREE.Vector3(0, 1, 0), tank.rotation.y).add(tank.position); camera.position.lerp(desired, 1 - Math.pow(.001, delta)); camera.lookAt(tank.position.x, tank.position.y + 2, tank.position.z); }
-  updateProjectiles(delta); $('speed').textContent = `${Math.round(Math.abs(speed) * 3.6)} KM/H`; $('player-dot').style.left = `${50 + tank.position.x / 5}%`; $('player-dot').style.top = `${50 + tank.position.z / 5}%`; syncLocalPlayer(); renderer.render(scene, camera);
+  if (state.vehicle.id === 'jet' && cameraMode === 'cockpit') { cockpitInterior.visible=true; const cockpit = tank.localToWorld(new THREE.Vector3(0, 1.85, -2.15)); const look = tank.localToWorld(new THREE.Vector3(0, 1.75, -60)); camera.position.lerp(cockpit, 1 - Math.pow(.0001, delta)); camera.lookAt(look); } else { cockpitInterior.visible=false; const desired = new THREE.Vector3(0, state.vehicle.id === 'jet' ? 11 : 15, state.vehicle.id === 'jet' ? 34 : 25).applyAxisAngle(new THREE.Vector3(0, 1, 0), tank.rotation.y).add(tank.position); camera.position.lerp(desired, 1 - Math.pow(.001, delta)); camera.lookAt(tank.position.x, tank.position.y + 2, tank.position.z); }
+  updateProjectiles(delta); $('speed').textContent = `${Math.round(Math.abs(speed) * 3.6)} KM/H`; $('player-dot').style.left = `${50 + tank.position.x / MAP_SIZE * 100}%`; $('player-dot').style.top = `${50 + tank.position.z / MAP_SIZE * 100}%`; syncLocalPlayer(); renderer.render(scene, camera);
 }
 
 startFirebase();
