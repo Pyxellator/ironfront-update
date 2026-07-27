@@ -1,0 +1,37 @@
+{
+  "name": "ironfront-command",
+  "version": "0.2.0",
+  "description": "Desktop multiplayer prototype with four factions",
+  "main": "electron/main.cjs",
+  "author": "Ironfront Studio",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "release:win": "npm run build && electron-builder --win nsis --publish always",
+    "start": "electron ."
+  },
+  "build": {
+    "appId": "com.ironfront.command",
+    "productName": "Ironfront Command",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "build/icon.ico" },
+    "publish": [{ "provider": "github", "owner": "Pyxellator", "repo": "ironfront-update" }],
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true, "shortcutName": "Ironfront Command" }
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "firebase": "latest",
+    "three": "latest",
+    "vite": "latest",
+    "wait-on": "latest"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}

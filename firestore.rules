@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function validTeam(team) { return team == null || team in ['scarlet', 'cobalt', 'gold', 'verdant']; }
+    function validVehicle(vehicle) { return vehicle == null || vehicle in ['tank', 'jet', 'boat']; }
+    function validPlayer(data) {
+      return data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 18
+        && validTeam(data.teamId)
+        && validVehicle(data.vehicleId)
+        && data.status in ['lobby', 'ready', 'active'];
+    }
+
+    match /lobbies/{lobbyId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['code', 'hostId', 'phase', 'maxPlayers', 'createdAt', 'updatedAt'])
+        && request.resource.data.code == lobbyId
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.phase == 'lobby'
+        && request.resource.data.maxPlayers == 16;
+      allow update: if signedIn()
+        && request.auth.uid == resource.data.hostId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phase', 'updatedAt']);
+      allow delete: if false;
+
+      match /players/{playerId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && request.auth.uid == playerId && validPlayer(request.resource.data);
+        allow update: if signedIn()
+          && request.auth.uid == playerId
+          && validPlayer(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'teamId', 'vehicleId', 'status', 'updatedAt',
+            'position', 'rotationY', 'clientUpdatedAt'
+          ]);
+        allow delete: if signedIn() && request.auth.uid == playerId;
+      }
+    }
+  }
+}

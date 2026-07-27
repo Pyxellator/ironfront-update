@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ironfront Command</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game-canvas" aria-label="3D battlefield"></canvas>
+      <section id="lobby-screen" class="screen">
+        <div class="brand"><span class="eyebrow">TACTICAL WARFARE PROTOTYPE</span><h1>IRONFRONT<br/><em>COMMAND</em></h1><p>Vier Fraktionen. Eine Kriegszone. Dein Einsatz beginnt jetzt.</p></div>
+        <div class="lobby-card glass">
+          <div class="status"><span class="pulse"></span><span id="connection-status">LOKALER MODUS BEREIT</span></div>
+          <label for="pilot-name">PILOTENNAME</label><input id="pilot-name" maxlength="18" placeholder="Dein Rufname" value="Pilot" />
+          <label for="room-code">LOBBY-CODE <span>(optional)</span></label><input id="room-code" maxlength="8" placeholder="z. B. ALPHA42" />
+          <div class="actions"><button id="create-lobby" class="primary">LOBBY ERSTELLEN</button><button id="join-lobby" class="secondary">LOBBY BEITRETEN</button></div>
+          <small>Firebase-Synchronisation wird automatisch aktiviert, sobald Firestore in deinem Projekt freigeschaltet ist.</small>
+        </div>
+      </section>
+      <section id="team-screen" class="screen hidden">
+        <div class="topbar"><div><span class="eyebrow">OPERATION</span><h2 id="lobby-title">LOBBY</h2></div><div id="player-count">1 / 16 SPIELER</div></div>
+        <div class="selection"><div class="selection-copy"><span class="eyebrow">ECHTZEIT-LOBBY</span><h2>WÄHLE DEINE<br/><em>FRAKTION</em></h2><p>Jede Fraktion startet an einer eigenen Basis. Alle verbundenen Piloten und ihre Teams aktualisieren sich live.</p><div id="lobby-roster" class="lobby-roster"><div class="roster-empty">Verbinde mit der Lobby …</div></div></div><div id="team-grid" class="team-grid"></div></div>
+        <div class="footer-action"><button id="deploy-button" class="primary" disabled>FAHRZEUG WÄHLEN</button></div>
+      </section>
+      <section id="vehicle-screen" class="screen hidden">
+        <div class="topbar"><div><span class="eyebrow">SCHRITT 02 / 02</span><h2>DEPLOYMENT</h2></div><button id="back-team" class="text-button">← FRAKTION ÄNDERN</button></div>
+        <div class="vehicle-layout"><div class="selection-copy"><span class="eyebrow" id="selected-team-label">FRAKTION</span><h2>WÄHLE DEIN<br/><em>FAHRZEUG</em></h2><p>Für den ersten Test ist jedes Fahrzeug fahrbar. Panzer sind bereits voll umgesetzt.</p></div><div id="vehicle-grid" class="vehicle-grid"></div></div>
+        <div class="footer-action"><button id="start-game" class="primary" disabled>INS GEFECHT</button></div>
+      </section>
+      <section id="hud" class="hidden"><div class="hud-top"><div class="compass"><span>W</span><span>NW</span><b>N</b><span>NE</span><span>E</span></div><div class="match-info"><span id="match-room">LOBBY</span><strong id="hud-team">TEAM</strong></div></div><div class="minimap"><div class="map-grid"></div><i class="base-dot red"></i><i class="base-dot blue"></i><i class="base-dot gold"></i><i class="base-dot green"></i><i id="player-dot"></i></div><div class="hud-bottom"><div class="vehicle-readout"><b id="vehicle-name">M1A1 MAIN BATTLE TANK</b><span id="speed">0 KM/H</span></div><div class="controls">WASD <span>FAHREN</span> &nbsp; • &nbsp; MAUS <span>KAMERA</span> &nbsp; • &nbsp; SHIFT <span>TURBO</span></div><button id="leave-match" class="text-button">LOBBY VERLASSEN</button></div></section>
+      <div id="toast" class="toast"></div>
+      <aside id="update-banner" class="update-banner hidden"><span id="update-message">Ein Update ist bereit.</span><button id="install-update" class="primary">JETZT INSTALLIEREN</button></aside>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
