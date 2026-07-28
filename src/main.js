@@ -130,7 +130,8 @@ if (window.ironfrontUpdater) {
 
 let scene, camera, renderer, tank, turret, clock, keys = {}, gameStarted = false;
 let flight = null, cameraMode = 'third', cockpitInterior = null, lastGunShot = 0, lastMissileShot = 0;
-const projectiles = [], remotePlayers = new Map();
+const projectiles = [], explosions = [], worldColliders = [], tunnelVolumes = [], remotePlayers = new Map();
+let destroyed = false, groundVelocity = 0;
 let localVoiceStream = null, unsubscribeVoiceSignals = null;
 const voicePeers = new Map();
 function makeBase(team) {
@@ -146,7 +147,22 @@ function makeBase(team) {
   const edge = new THREE.MeshStandardMaterial({ color: '#c6d0c3', roughness: .7 }); for (const x of [-15.5, 15.5]) { const line = new THREE.Mesh(new THREE.BoxGeometry(.7, .08, 520), edge); line.position.set(x, .15, 0); runway.add(line); }
   for (let z = -240; z <= 240; z += 36) { const dash = new THREE.Mesh(new THREE.BoxGeometry(.7, .08, 16), edge); dash.position.set(0, .16, z); runway.add(dash); for (const x of [-18, 18]) { const lamp = new THREE.Mesh(new THREE.SphereGeometry(.28, 8, 6), new THREE.MeshBasicMaterial({ color: team.color })); lamp.position.set(x, .4, z); runway.add(lamp); } }
   const thresholdMaterial = new THREE.MeshBasicMaterial({ color: '#f1f3df' }); for (const x of [-10, -6, -2, 2, 6, 10]) { const threshold = new THREE.Mesh(new THREE.BoxGeometry(2.2, .09, 24), thresholdMaterial); threshold.position.set(x, .17, -247); runway.add(threshold); }
+  const tunnel = new THREE.Group(); tunnel.position.z = -25;
+  const rock = new THREE.MeshStandardMaterial({ color: '#354b40', roughness: 1, side: THREE.DoubleSide });
+  const inner = new THREE.MeshStandardMaterial({ color: '#101816', roughness: .95, side: THREE.BackSide });
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 150, 24, 1, true, Math.PI / 2, Math.PI), inner); shell.rotation.x = Math.PI / 2; tunnel.add(shell);
+  for (let z = -75; z <= 75; z += 12.5) {
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(18, 3.8, 7, 20, Math.PI), rock); arch.position.z = z; tunnel.add(arch);
+    for (const x of [-18, 18]) { const pillar = new THREE.Mesh(new THREE.BoxGeometry(7.5, 18, 7.5), rock); pillar.position.set(x, 7, z); tunnel.add(pillar); }
+  }
+  const tunnelFloor = new THREE.Mesh(new THREE.BoxGeometry(34, .16, 150), new THREE.MeshStandardMaterial({ color: '#171d1b', roughness: .9 })); tunnelFloor.position.y = .08; tunnel.add(tunnelFloor);
+  for (let z = -62; z <= 62; z += 25) for (const x of [-13.5, 13.5]) { const lamp = new THREE.PointLight(team.color, .9, 19); lamp.position.set(x, 5.5, z); tunnel.add(lamp); }
+  runway.add(tunnel);
+  for (const x of [-70, 70]) { const ridge = new THREE.Mesh(new THREE.ConeGeometry(52, 96, 8), rock); ridge.position.set(x, 47, -25); ridge.rotation.y = x; runway.add(ridge); }
   scene.add(runway);
+  tunnelVolumes.push({ team, center: -25, halfLength: 82, halfWidth: 17 });
+  for (const x of [-70, 70]) { const center = runway.localToWorld(new THREE.Vector3(x, 0, -25)); worldColliders.push({ x: center.x, z: center.z, radius: 40, height: 96, type: 'mountain' }); }
+  worldColliders.push({ x: group.position.x, z: group.position.z, radius: 12, height: 23, type: 'base' });
 }
 function createTank(color, isLocal = false) {
   const group = new THREE.Group(); const material = new THREE.MeshStandardMaterial({ color, metalness: .55, roughness: .4 }); const dark = new THREE.MeshStandardMaterial({ color: '#19221e', metalness: .7, roughness: .35 });
@@ -208,19 +224,61 @@ function syncRemotePlayers() {
 }
 function fireProjectile(kind) {
   const now = performance.now(); const cooldown = kind === 'gun' ? 105 : 1250;
-  if (!tank || now - (kind === 'gun' ? lastGunShot : lastMissileShot) < cooldown) return;
+  if (!tank || destroyed || now - (kind === 'gun' ? lastGunShot : lastMissileShot) < cooldown) return;
   if (kind === 'gun') lastGunShot = now; else lastMissileShot = now;
   const color = kind === 'gun' ? '#ffe88b' : '#ff7a58';
-  const geometry = kind === 'gun' ? new THREE.SphereGeometry(.13, 8, 8) : new THREE.CylinderGeometry(.16, .26, 2.4, 10);
+  const geometry = kind === 'gun' ? new THREE.SphereGeometry(.16, 8, 8) : new THREE.CylinderGeometry(.24, .34, 3.2, 12);
   const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color }));
   mesh.position.copy(tank.localToWorld(new THREE.Vector3(kind === 'gun' ? .45 : 1.7, kind === 'gun' ? 2.9 : 1.1, -5.8)));
   mesh.quaternion.copy(tank.quaternion); if (kind === 'missile') mesh.rotateX(Math.PI / 2);
+  if (kind === 'missile') { const flame = new THREE.PointLight('#ff5b28', 5, 32); flame.position.y = -1.8; mesh.add(flame); }
   scene.add(mesh); const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(tank.quaternion).normalize();
-  projectiles.push({ mesh, direction, speed: kind === 'gun' ? 260 : 110, born: now, kind });
+  projectiles.push({ mesh, direction, speed: kind === 'gun' ? 260 : 125, born: now, kind, trailTimer: 0 });
   if (kind === 'missile') toast('RAKETE ABGEFEUERT');
 }
+function createExplosion(position, scale = 1) {
+  const group = new THREE.Group(); group.position.copy(position);
+  const flash = new THREE.Mesh(new THREE.SphereGeometry(2.3 * scale, 18, 12), new THREE.MeshBasicMaterial({ color: '#fff1a1', transparent: true, opacity: 1 })); group.add(flash);
+  const fire = new THREE.Mesh(new THREE.SphereGeometry(3.6 * scale, 16, 12), new THREE.MeshBasicMaterial({ color: '#ff5a1f', transparent: true, opacity: .85 })); group.add(fire);
+  const smoke = new THREE.Mesh(new THREE.SphereGeometry(4.4 * scale, 14, 10), new THREE.MeshBasicMaterial({ color: '#202625', transparent: true, opacity: .72 })); group.add(smoke);
+  const light = new THREE.PointLight('#ff6b2f', 12 * scale, 85 * scale); group.add(light);
+  const fragments = [];
+  for (let i = 0; i < 22; i += 1) { const fragment = new THREE.Mesh(new THREE.SphereGeometry(.16 * scale, 5, 4), new THREE.MeshBasicMaterial({ color: i % 2 ? '#ffb33b' : '#ff542b', transparent: true })); group.add(fragment); fragments.push({ mesh: fragment, velocity: new THREE.Vector3((Math.random() - .5) * 28, Math.random() * 22 + 5, (Math.random() - .5) * 28).multiplyScalar(scale) }); }
+  scene.add(group); explosions.push({ group, flash, fire, smoke, light, fragments, age: 0, scale, trail: false });
+}
+function createMissileTrail(position) {
+  const puff = new THREE.Mesh(new THREE.SphereGeometry(.4, 7, 5), new THREE.MeshBasicMaterial({ color: '#ffb35c', transparent: true, opacity: .72 })); puff.position.copy(position); scene.add(puff);
+  explosions.push({ group: puff, flash: puff, fire: puff, smoke: puff, light: { intensity: 0 }, fragments: [], age: 0, scale: .08, trail: true });
+}
+function updateExplosions(delta) {
+  for (let i = explosions.length - 1; i >= 0; i -= 1) {
+    const effect = explosions[i]; effect.age += delta; const t = effect.age;
+    if (effect.trail) { effect.group.scale.setScalar(1 + t * 4); effect.group.material.opacity = Math.max(0, .72 - t * 2.4); if (t > .3) { scene.remove(effect.group); explosions.splice(i, 1); } continue; }
+    effect.flash.scale.setScalar(1 + t * 8); effect.flash.material.opacity = Math.max(0, 1 - t * 5); effect.fire.scale.setScalar(1 + t * 4); effect.fire.material.opacity = Math.max(0, .9 - t * .65); effect.smoke.scale.setScalar(.7 + t * 3.2); effect.smoke.position.y += delta * 4; effect.smoke.material.opacity = Math.max(0, .65 - t * .3); effect.light.intensity = Math.max(0, 12 * effect.scale * (1 - t / 1.1));
+    effect.fragments.forEach((fragment) => { fragment.velocity.y -= 18 * delta; fragment.mesh.position.addScaledVector(fragment.velocity, delta); fragment.mesh.material.opacity = Math.max(0, 1 - t / 1.5); });
+    if (t > 2.1) { scene.remove(effect.group); explosions.splice(i, 1); }
+  }
+}
+function localRunwayPosition(position, team) {
+  const heading = Math.atan2(team.position[0], team.position[2]); const dx = position.x - team.position[0]; const dz = position.z - team.position[2];
+  return { x: Math.cos(heading) * dx - Math.sin(heading) * dz, z: Math.sin(heading) * dx + Math.cos(heading) * dz };
+}
+function isOnRunway(position) { return teams.some((team) => { const local = localRunwayPosition(position, team); return Math.abs(local.x) < 17 && Math.abs(local.z) < 270; }); }
+function isInsideTunnel(position) { return tunnelVolumes.some((volume) => { const local = localRunwayPosition(position, volume.team); return Math.abs(local.x) < volume.halfWidth && Math.abs(local.z - volume.center) < volume.halfLength && position.y < 18; }); }
+function findWorldCollision(position, radius = 2.5) { if (isInsideTunnel(position)) return null; return worldColliders.find((collider) => position.y < collider.height && Math.hypot(position.x - collider.x, position.z - collider.z) < collider.radius + radius); }
+function respawnPlayer() {
+  const heading = Math.atan2(state.team.position[0], state.team.position[2]); tank.position.set(state.team.position[0] + Math.sin(heading) * 205, state.vehicle.id === 'jet' ? 1.35 : state.vehicle.id === 'boat' ? 1 : 0, state.team.position[2] + Math.cos(heading) * 205); tank.rotation.set(0, heading, 0); tank.visible = true; destroyed = false; groundVelocity = 0;
+  if (flight) Object.assign(flight, { speed: 0, throttle: 0, pitch: 0, roll: 0, verticalSpeed: 0, airborne: false }); toast('FAHRZEUG WIEDER EINSATZBEREIT');
+}
+function destroyPlayer(reason) { if (destroyed) return; destroyed = true; createExplosion(tank.position.clone().add(new THREE.Vector3(0, 2, 0)), state.vehicle.id === 'jet' ? 1.7 : 1.25); tank.visible = false; toast(`${reason} · RESPAWN IN 3 SEKUNDEN`); setTimeout(respawnPlayer, 3000); }
 function updateProjectiles(delta) {
-  const now = performance.now(); for (let i = projectiles.length - 1; i >= 0; i -= 1) { const shot = projectiles[i]; shot.mesh.position.addScaledVector(shot.direction, shot.speed * delta); if (shot.kind === 'missile') shot.mesh.rotateZ(delta * 8); if (now - shot.born > (shot.kind === 'gun' ? 1200 : 5000)) { scene.remove(shot.mesh); projectiles.splice(i, 1); } }
+  const now = performance.now();
+  for (let i = projectiles.length - 1; i >= 0; i -= 1) {
+    const shot = projectiles[i]; shot.mesh.position.addScaledVector(shot.direction, shot.speed * delta);
+    if (shot.kind === 'missile') { shot.mesh.rotateZ(delta * 8); shot.trailTimer -= delta; if (shot.trailTimer <= 0) { shot.trailTimer = .035; createMissileTrail(shot.mesh.position.clone().addScaledVector(shot.direction, -1.7)); } }
+    const hit = shot.mesh.position.y <= .15 || findWorldCollision(shot.mesh.position, shot.kind === 'missile' ? .8 : .15); const expired = now - shot.born > (shot.kind === 'gun' ? 1200 : 5000);
+    if (hit || expired) { if (shot.kind === 'missile') createExplosion(shot.mesh.position, hit ? .8 : .45); scene.remove(shot.mesh); projectiles.splice(i, 1); }
+  }
 }
 function signalRef(peerId) { const key = [state.userId, peerId].sort().join('__'); return doc(state.db, 'lobbies', state.room, 'voiceSignals', key); }
 function addLocalAudio(peer) { if (!localVoiceStream || peer.localTracksAdded) return; localVoiceStream.getTracks().forEach((track) => peer.connection.addTrack(track, localVoiceStream)); peer.localTracksAdded = true; }
@@ -261,8 +319,14 @@ function addTerrain() {
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 96, 96), new THREE.MeshStandardMaterial({ color: '#344f3b', roughness: 1 })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow=true; scene.add(ground);
   const water = new THREE.Mesh(new THREE.PlaneGeometry(MAP_SIZE, 260), new THREE.MeshPhysicalMaterial({ color: '#176270', metalness: .25, roughness: .12, transparent: true, opacity: .9 })); water.rotation.x = -Math.PI / 2; water.position.set(0, .08, 0); scene.add(water);
   const roadMat = new THREE.MeshStandardMaterial({ color: '#28332d', roughness: .95 }); for (const roadInfo of [[0, -640, 26, 1500], [-640, 0, 1500, 26], [640, 0, 1500, 26]]) { const road = new THREE.Mesh(new THREE.BoxGeometry(roadInfo[2], .06, roadInfo[3]), roadMat); road.position.set(roadInfo[0], .13, roadInfo[1]); scene.add(road); }
-  const mountainMat = new THREE.MeshStandardMaterial({ color: '#425e50', roughness: .98 }); for (let i = 0; i < 160; i += 1) { const angle = (i / 160) * Math.PI * 2; const radius = MAP_SIZE * .44 + (i % 5) * 32; const height = 45 + (i % 9) * 19; const mountain = new THREE.Mesh(new THREE.ConeGeometry(32 + (i % 6) * 18, height, 7), mountainMat); mountain.position.set(Math.cos(angle) * radius, height / 2 - 1, Math.sin(angle) * radius); mountain.rotation.y = i; mountain.castShadow=true; scene.add(mountain); }
-  const treeMat = new THREE.MeshStandardMaterial({ color: '#183d28', roughness: .9 }); for (let i = 0; i < 520; i += 1) { const x = -1650 + ((i * 197) % 3300); const z = -1650 + ((i * 353) % 3300); if (Math.abs(z) < 145 || Math.abs(x-Math.sign(x)*1120)<45 && Math.abs(z-Math.sign(z)*1120)<300) continue; const height = 8 + (i % 6) * 3; const tree = new THREE.Mesh(new THREE.ConeGeometry(3 + (i % 4), height, 7), treeMat); tree.position.set(x, height / 2, z); tree.castShadow=true; scene.add(tree); }
+  const mountainMat = new THREE.MeshStandardMaterial({ color: '#425e50', roughness: .98 });
+  for (let i = 0; i < 160; i += 1) {
+    const angle = (i / 160) * Math.PI * 2; const radius = MAP_SIZE * .44 + (i % 5) * 32; const height = 45 + (i % 9) * 19; const width = 32 + (i % 6) * 18; const x = Math.cos(angle) * radius; const z = Math.sin(angle) * radius;
+    const blocksTunnel = teams.some((team) => { const heading = Math.atan2(team.position[0], team.position[2]); const tunnelX = team.position[0] + Math.sin(heading) * -25; const tunnelZ = team.position[2] + Math.cos(heading) * -25; return Math.hypot(x - tunnelX, z - tunnelZ) < 82; });
+    if (blocksTunnel) continue;
+    const mountain = new THREE.Mesh(new THREE.ConeGeometry(width, height, 7), mountainMat); mountain.position.set(x, height / 2 - 1, z); mountain.rotation.y = i; mountain.castShadow=true; scene.add(mountain); worldColliders.push({ x, z, radius: width * .72, height, type: 'mountain' });
+  }
+  const treeMat = new THREE.MeshStandardMaterial({ color: '#183d28', roughness: .9 }); for (let i = 0; i < 520; i += 1) { const x = -1650 + ((i * 197) % 3300); const z = -1650 + ((i * 353) % 3300); if (Math.abs(z) < 145 || Math.abs(x-Math.sign(x)*1120)<45 && Math.abs(z-Math.sign(z)*1120)<300) continue; const height = 8 + (i % 6) * 3; const tree = new THREE.Mesh(new THREE.ConeGeometry(3 + (i % 4), height, 7), treeMat); tree.position.set(x, height / 2, z); tree.castShadow=true; scene.add(tree); worldColliders.push({ x, z, radius: 2.2 + (i % 4), height, type: 'tree' }); }
   const cloudMat = new THREE.MeshBasicMaterial({color:'#f3f6ef',transparent:true,opacity:.42,depthWrite:false}); for(let i=0;i<24;i+=1){const cloud=new THREE.Group();for(let j=0;j<5;j+=1){const puff=new THREE.Mesh(new THREE.SphereGeometry(18+(j%3)*8,12,8),cloudMat);puff.position.set(j*22,Math.sin(j)*7,0);puff.scale.z=.55;cloud.add(puff);}cloud.position.set(-1500+(i*487)%3000,220+(i%5)*55,-1500+(i*733)%3000);scene.add(cloud);}
 }
 function beginGame() {
@@ -284,20 +348,23 @@ function syncLocalPlayer(force = false) {
 function resize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
 function animate() {
   requestAnimationFrame(animate); const delta = Math.min(clock.getDelta(), .05); let speed = 0;
-  if (state.vehicle.id === 'jet') {
+  const previousPosition = tank.position.clone();
+  if (!destroyed && state.vehicle.id === 'jet') {
     const pitchInput = (keys.KeyR || keys.ArrowUp ? 1 : 0) - (keys.KeyF || keys.ArrowDown ? 1 : 0); const rollInput = (keys.KeyA ? 1 : 0) - (keys.KeyD ? 1 : 0); const throttleInput = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
     flight.throttle = THREE.MathUtils.clamp(flight.throttle + throttleInput * delta * .38, 0, 1); flight.speed = THREE.MathUtils.clamp(flight.speed + (flight.throttle * 12 - 1.8 - flight.speed * .08) * delta, 0, 120); flight.pitch = THREE.MathUtils.clamp(flight.pitch + pitchInput * delta * .34, -.28, .34); flight.roll = THREE.MathUtils.lerp(flight.roll, rollInput * .55, delta * 2.4);
     tank.rotation.x = flight.airborne ? flight.pitch : 0; tank.rotation.z = flight.roll; tank.rotation.y += rollInput * delta * (.2 + flight.speed * .008); tank.translateZ(-flight.speed * delta);
     if (flight.airborne) { const lift = Math.max(0, flight.speed - 32) * Math.max(0, flight.pitch + .08) * .72; flight.verticalSpeed += (lift - 9.81) * delta; tank.position.y += flight.verticalSpeed * delta; } else if (flight.speed > 42 && flight.pitch > .09) { flight.airborne = true; flight.verticalSpeed = 3.4; }
-    if (tank.position.y <= 1) { tank.position.y = 1; flight.verticalSpeed = 0; flight.airborne = false; }
+    if (tank.position.y <= 1) { const safeLanding = flight.airborne && isOnRunway(tank.position) && flight.verticalSpeed > -7 && Math.abs(flight.pitch) < .22 && Math.abs(flight.roll) < .3; if (flight.airborne && !safeLanding) destroyPlayer('JET ABGESTÜRZT'); tank.position.y = 1; flight.verticalSpeed = 0; flight.airborne = false; }
     speed = flight.speed; $('flight-status').textContent = flight.airborne ? `FLUG · ${Math.round(tank.position.y)} M` : `STARTLAUF · ${Math.round(flight.throttle * 100)}% SCHUB`;
-  } else {
+  } else if (!destroyed) {
     let input = 0; if (keys.KeyW || keys.ArrowUp) input += 1; if (keys.KeyS || keys.ArrowDown) input -= 1; const steer = ((keys.KeyA || keys.ArrowLeft) ? 1 : 0) - ((keys.KeyD || keys.ArrowRight) ? 1 : 0); const topSpeed = keys.ShiftLeft ? 33 : 19; if (input) tank.rotation.y += steer * delta * 1.35 * input; else if (steer) tank.rotation.y += steer * delta * .65; speed = input * topSpeed; tank.translateZ(-speed * delta); if (state.vehicle.id === 'boat') tank.position.y = 1 + Math.sin(performance.now() * .003) * .12; $('flight-status').textContent = 'BODENBETRIEB';
+    if (state.vehicle.id !== 'boat' && tank.position.y > 0) { groundVelocity -= 18 * delta; tank.position.y = Math.max(0, tank.position.y + groundVelocity * delta); if (tank.position.y === 0) groundVelocity = 0; }
   }
+  if (!destroyed) { const collision = findWorldCollision(tank.position, state.vehicle.id === 'jet' ? 4.5 : 3.6); if (collision) { if (Math.abs(speed) > 4 || state.vehicle.id === 'jet') destroyPlayer(`${collision.type === 'mountain' ? 'BERG' : 'HINDERNIS'}-KOLLISION`); else tank.position.copy(previousPosition); } }
   tank.position.x = THREE.MathUtils.clamp(tank.position.x, -MAP_SIZE / 2 + 40, MAP_SIZE / 2 - 40); tank.position.z = THREE.MathUtils.clamp(tank.position.z, -MAP_SIZE / 2 + 40, MAP_SIZE / 2 - 40);
   remotePlayers.forEach((remote) => { remote.object.position.lerp(remote.targetPosition, 1 - Math.pow(.001, delta)); const angle = Math.atan2(Math.sin(remote.targetRotation - remote.object.rotation.y), Math.cos(remote.targetRotation - remote.object.rotation.y)); remote.object.rotation.y += angle * Math.min(1, delta * 10); });
   if (state.vehicle.id === 'jet' && cameraMode === 'cockpit') { cockpitInterior.visible=true; const cockpit = tank.localToWorld(new THREE.Vector3(0, 1.85, -2.15)); const look = tank.localToWorld(new THREE.Vector3(0, 1.75, -60)); camera.position.lerp(cockpit, 1 - Math.pow(.0001, delta)); camera.lookAt(look); } else { cockpitInterior.visible=false; const desired = new THREE.Vector3(0, state.vehicle.id === 'jet' ? 11 : 15, state.vehicle.id === 'jet' ? 34 : 25).applyAxisAngle(new THREE.Vector3(0, 1, 0), tank.rotation.y).add(tank.position); camera.position.lerp(desired, 1 - Math.pow(.001, delta)); camera.lookAt(tank.position.x, tank.position.y + 2, tank.position.z); }
-  updateProjectiles(delta); $('speed').textContent = `${Math.round(Math.abs(speed) * 3.6)} KM/H`; $('player-dot').style.left = `${50 + tank.position.x / MAP_SIZE * 100}%`; $('player-dot').style.top = `${50 + tank.position.z / MAP_SIZE * 100}%`; syncLocalPlayer(); renderer.render(scene, camera);
+  updateProjectiles(delta); updateExplosions(delta); $('speed').textContent = `${Math.round(Math.abs(speed) * 3.6)} KM/H`; $('player-dot').style.left = `${50 + tank.position.x / MAP_SIZE * 100}%`; $('player-dot').style.top = `${50 + tank.position.z / MAP_SIZE * 100}%`; syncLocalPlayer(); renderer.render(scene, camera);
 }
 
 startFirebase();
