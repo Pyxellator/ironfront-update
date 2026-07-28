@@ -118,7 +118,7 @@ if (window.ironfrontUpdater) {
     const screen = $('update-screen');
     if (status.type === 'checking') { $('update-title').textContent = 'SUCHE NACH UPDATES'; $('update-message').textContent = 'GitHub Releases werden geprüft …'; }
     if (status.type === 'available') { updateAnswered = true; $('update-title').textContent = 'UPDATE WIRD GELADEN'; $('update-message').textContent = status.message; }
-    if (status.type === 'downloaded') { updateAnswered = true; $('update-title').textContent = 'UPDATE BEREIT'; $('update-message').textContent = status.message; }
+    if (status.type === 'downloaded') { updateAnswered = true; $('update-title').textContent = 'UPDATE WIRD INSTALLIERT'; $('update-message').textContent = status.message; }
     if (status.type === 'current' || status.type === 'error') { updateAnswered = true; $('update-title').textContent = status.type === 'current' ? 'SYSTEM AKTUELL' : 'OFFLINE-MODUS'; $('update-message').textContent = status.type === 'current' ? 'Die neueste Version ist installiert.' : status.message; setTimeout(() => screen.classList.add('hidden'), 900); }
   };
   window.ironfrontUpdater.onStatus(applyUpdateStatus);

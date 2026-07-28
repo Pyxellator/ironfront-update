@@ -16,15 +16,19 @@ function configureAutoUpdater() {
   sendUpdateStatus('checking', 'GitHub Releases werden geprüft …');
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
   autoUpdater.on('update-available', (info) => sendUpdateStatus('available', `Version ${info.version} wird heruntergeladen …`));
   autoUpdater.on('update-not-available', () => sendUpdateStatus('current'));
-  autoUpdater.on('update-downloaded', (info) => { sendUpdateStatus('downloaded', `Version ${info.version} wird jetzt installiert.`); setTimeout(() => autoUpdater.quitAndInstall(), 1800); });
+  autoUpdater.on('update-downloaded', (info) => {
+    sendUpdateStatus('downloaded', `Version ${info.version} wird im Hintergrund installiert. Die App startet gleich neu.`);
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 1200);
+  });
   autoUpdater.on('error', (error) => { console.warn('Update check failed:', error.message); sendUpdateStatus('error', 'Updateprüfung fehlgeschlagen.'); });
   setTimeout(() => autoUpdater.checkForUpdates().catch((error) => { console.warn('Update check failed:', error.message); sendUpdateStatus('error', 'Updateprüfung nicht erreichbar. Spiel wird gestartet.'); }), 1200);
 }
 
-ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
+ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(true, true));
 ipcMain.handle('update:get-status', () => updateStatus);
 
 function createWindow() {
