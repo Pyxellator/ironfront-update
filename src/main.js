@@ -158,6 +158,7 @@ function makeBase(team) {
   const tunnelFloor = new THREE.Mesh(new THREE.BoxGeometry(34, .16, 150), new THREE.MeshStandardMaterial({ color: '#171d1b', roughness: .9 })); tunnelFloor.position.y = .08; tunnel.add(tunnelFloor);
   for (let z = -62; z <= 62; z += 25) for (const x of [-13.5, 13.5]) { const lamp = new THREE.PointLight(team.color, .9, 19); lamp.position.set(x, 5.5, z); tunnel.add(lamp); }
   runway.add(tunnel);
+  const mountainShell = new THREE.Mesh(new THREE.CylinderGeometry(54, 54, 176, 9, 5, true, Math.PI / 2, Math.PI), new THREE.MeshStandardMaterial({ color: '#3d594a', roughness: 1, flatShading: true, side: THREE.DoubleSide })); mountainShell.rotation.x = Math.PI / 2; mountainShell.position.set(0, 0, -25); runway.add(mountainShell);
   for (const x of [-70, 70]) { const ridge = new THREE.Mesh(new THREE.ConeGeometry(52, 96, 8), rock); ridge.position.set(x, 47, -25); ridge.rotation.y = x; runway.add(ridge); }
   scene.add(runway);
   tunnelVolumes.push({ team, center: -25, halfLength: 82, halfWidth: 17 });
@@ -326,7 +327,13 @@ function addTerrain() {
     if (blocksTunnel) continue;
     const mountain = new THREE.Mesh(new THREE.ConeGeometry(width, height, 7), mountainMat); mountain.position.set(x, height / 2 - 1, z); mountain.rotation.y = i; mountain.castShadow=true; scene.add(mountain); worldColliders.push({ x, z, radius: width * .72, height, type: 'mountain' });
   }
-  const treeMat = new THREE.MeshStandardMaterial({ color: '#183d28', roughness: .9 }); for (let i = 0; i < 520; i += 1) { const x = -1650 + ((i * 197) % 3300); const z = -1650 + ((i * 353) % 3300); if (Math.abs(z) < 145 || Math.abs(x-Math.sign(x)*1120)<45 && Math.abs(z-Math.sign(z)*1120)<300) continue; const height = 8 + (i % 6) * 3; const tree = new THREE.Mesh(new THREE.ConeGeometry(3 + (i % 4), height, 7), treeMat); tree.position.set(x, height / 2, z); tree.castShadow=true; scene.add(tree); worldColliders.push({ x, z, radius: 2.2 + (i % 4), height, type: 'tree' }); }
+  const treeMat = new THREE.MeshStandardMaterial({ color: '#183d28', roughness: .9 });
+  for (let i = 0; i < 520; i += 1) {
+    const x = -1650 + ((i * 197) % 3300); const z = -1650 + ((i * 353) % 3300);
+    const blocksRunway = teams.some((team) => { const local = localRunwayPosition(new THREE.Vector3(x, 0, z), team); return Math.abs(local.x) < 88 && Math.abs(local.z) < 340; });
+    if (Math.abs(z) < 145 || blocksRunway) continue;
+    const height = 8 + (i % 6) * 3; const tree = new THREE.Mesh(new THREE.ConeGeometry(3 + (i % 4), height, 7), treeMat); tree.position.set(x, height / 2, z); tree.castShadow=true; scene.add(tree); worldColliders.push({ x, z, radius: 2.2 + (i % 4), height, type: 'tree' });
+  }
   const cloudMat = new THREE.MeshBasicMaterial({color:'#f3f6ef',transparent:true,opacity:.42,depthWrite:false}); for(let i=0;i<24;i+=1){const cloud=new THREE.Group();for(let j=0;j<5;j+=1){const puff=new THREE.Mesh(new THREE.SphereGeometry(18+(j%3)*8,12,8),cloudMat);puff.position.set(j*22,Math.sin(j)*7,0);puff.scale.z=.55;cloud.add(puff);}cloud.position.set(-1500+(i*487)%3000,220+(i%5)*55,-1500+(i*733)%3000);scene.add(cloud);}
 }
 function beginGame() {
